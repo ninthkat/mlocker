@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "mlocker",
+  "version": "0.1.0",
+  "description": "Origin-bound mlocker login suggestions and form filling.",
+  "permissions": ["nativeMessaging", "storage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "mlocker"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mlocker@example.local"
+    }
+  }
+}

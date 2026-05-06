@@ -1,0 +1,27 @@
+[package]
+name = "mlocker-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = "0.22"
+bip39 = { version = "2.0", features = ["rand"] }
+bs58 = "0.5"
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+ed25519-dalek = "2.1"
+hex = "0.4"
+hkdf = "0.12"
+hmac = "0.12"
+k256 = { version = "0.13", features = ["arithmetic"] }
+pbkdf2 = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+sha3 = "0.10"
+thiserror = "1"
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
