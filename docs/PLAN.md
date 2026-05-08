@@ -36,7 +36,7 @@ mlocker is a cross-platform password manager MVP with a path toward a 1Password-
 - Close high-value `op` CLI gaps: signin/session semantics, `item list/get/create/edit/delete`, templates, document/file attachments, vault selection, JSON output, and shell completion.
 - Provide `inject` template rendering for local automation references such as `mlocker://Item/password`.
 - Add machine-readable errors and stable exit codes.
-- Add importers for 1Password and generic JSON; Bitwarden and browser CSV exports are now covered by `import-logins`.
+- Keep migration formats current: `import` covers Chrome/generic CSV, Bitwarden CSV, 1Password CSV/JSON, and Apple Passwords/iCloud Keychain CSV; `export --format` writes generic, 1Password, or Keychain-compatible CSV.
 - Add service-account mode with scoped vault access and short-lived tokens.
 - Keep compatibility pragmatic: mirror `op` shapes where useful, but do not copy cloud-specific semantics that conflict with mlocker security.
 

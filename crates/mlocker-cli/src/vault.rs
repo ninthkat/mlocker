@@ -32,6 +32,8 @@ pub struct LoginItem {
     pub url: String,
     pub password: LoginPassword,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub totp: Option<TotpMetadata>,
 }
 
@@ -106,6 +108,7 @@ impl VaultState {
                     username: item.username,
                     url: item.site_url,
                     password: item.password,
+                    notes: item.notes,
                     totp: item.totp,
                 })
                 .collect(),
@@ -126,7 +129,7 @@ impl VaultState {
                     site_url: item.url,
                     username: item.username,
                     password: item.password,
-                    notes: None,
+                    notes: item.notes,
                     totp: item.totp,
                 })
                 .collect(),
@@ -281,6 +284,7 @@ pub fn add_login(
         username,
         url,
         password,
+        notes: None,
         totp: totp
             .map(|secret| {
                 normalize_totp_secret(&secret).map(|secret| TotpMetadata {
@@ -375,6 +379,7 @@ pub struct ImportLoginRequest {
     pub username: String,
     pub url: String,
     pub password: String,
+    pub notes: Option<String>,
     pub totp: Option<String>,
 }
 
@@ -403,6 +408,7 @@ pub fn import_logins(
         }) {
             existing.title = login.title;
             existing.password = LoginPassword::user_input(login.password);
+            existing.notes = login.notes;
             existing.totp = totp;
             summary.updated += 1;
         } else {
@@ -412,6 +418,7 @@ pub fn import_logins(
                 username: login.username,
                 url: login.url,
                 password: LoginPassword::user_input(login.password),
+                notes: login.notes,
                 totp,
             });
             summary.created += 1;

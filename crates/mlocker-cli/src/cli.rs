@@ -18,8 +18,10 @@ pub enum Command {
     AddLogin(AddLoginArgs),
     EditLogin(EditLoginArgs),
     DeleteLogin(DeleteLoginArgs),
-    ImportLogins(ImportLoginsArgs),
-    ExportLogins(ExportLoginsArgs),
+    #[command(name = "import", alias = "import-logins")]
+    Import(ImportArgs),
+    #[command(name = "export", alias = "export-logins")]
+    Export(ExportArgs),
     Get(GetArgs),
     List(ListArgs),
     Inject(InjectArgs),
@@ -88,7 +90,7 @@ pub struct DeleteLoginArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ImportLoginsArgs {
+pub struct ImportArgs {
     #[arg(long)]
     pub vault: PathBuf,
     #[arg(long)]
@@ -98,11 +100,13 @@ pub struct ImportLoginsArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ExportLoginsArgs {
+pub struct ExportArgs {
     #[arg(long)]
     pub vault: PathBuf,
     #[arg(long)]
     pub file: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = ExportFormat::Generic)]
+    pub format: ExportFormat,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -111,9 +115,31 @@ pub enum ImportFormat {
     Chrome,
     Bitwarden,
     GenericCsv,
+    #[value(name = "1password-csv", alias = "one-password-csv")]
+    OnePasswordCsv,
     #[value(name = "1password-json", alias = "one-password-json")]
     OnePasswordJson,
+    #[value(
+        name = "keychain-csv",
+        alias = "apple-passwords-csv",
+        alias = "safari-csv"
+    )]
+    KeychainCsv,
     GenericJson,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum ExportFormat {
+    #[value(name = "generic-csv")]
+    Generic,
+    #[value(name = "1password-csv", alias = "one-password-csv")]
+    OnePassword,
+    #[value(
+        name = "keychain-csv",
+        alias = "apple-passwords-csv",
+        alias = "safari-csv"
+    )]
+    Keychain,
 }
 
 #[derive(Debug, Args)]

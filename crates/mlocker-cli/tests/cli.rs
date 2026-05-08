@@ -273,7 +273,7 @@ fn import_logins_from_csv_creates_and_updates_items() {
     .unwrap();
     mlocker()
         .env("MLOCKER_MNEMONIC", MNEMONIC)
-        .args(["import-logins", "--vault"])
+        .args(["import", "--vault"])
         .arg(&vault)
         .args(["--file"])
         .arg(&csv)
@@ -289,7 +289,7 @@ fn import_logins_from_csv_creates_and_updates_items() {
     .unwrap();
     mlocker()
         .env("MLOCKER_MNEMONIC", MNEMONIC)
-        .args(["import-logins", "--vault"])
+        .args(["import", "--vault"])
         .arg(&vault)
         .args(["--file"])
         .arg(&csv)
@@ -319,6 +319,68 @@ fn import_logins_from_csv_creates_and_updates_items() {
     let list: Value = serde_json::from_slice(&list_output).unwrap();
 
     assert_eq!(list.as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn import_and_export_provider_csv_formats() {
+    let dir = tempdir().unwrap();
+    let vault = dir.path().join("vault.blob");
+    let keychain_csv = dir.path().join("keychain.csv");
+    let one_password_csv = dir.path().join("one-password.csv");
+    let exported_keychain_csv = dir.path().join("export-keychain.csv");
+
+    mlocker()
+        .args(["init", "--vault"])
+        .arg(&vault)
+        .args(["--mnemonic", MNEMONIC])
+        .assert()
+        .success();
+
+    std::fs::write(
+        &keychain_csv,
+        "Title,URL,Username,Password,Notes,OTPAuth\nKeychain,https://keychain.example,alice,keychain-secret,\"keychain note\",otpauth://totp/Keychain?secret=JBSWY3DPEHPK3PXP\n",
+    )
+    .unwrap();
+    mlocker()
+        .env("MLOCKER_MNEMONIC", MNEMONIC)
+        .args(["import", "--vault"])
+        .arg(&vault)
+        .args(["--file"])
+        .arg(&keychain_csv)
+        .args(["--format", "keychain-csv"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"created\": 1"));
+
+    mlocker()
+        .env("MLOCKER_MNEMONIC", MNEMONIC)
+        .args(["export", "--vault"])
+        .arg(&vault)
+        .args(["--file"])
+        .arg(&one_password_csv)
+        .args(["--format", "1password-csv"])
+        .assert()
+        .success();
+
+    let one_password_export = std::fs::read_to_string(&one_password_csv).unwrap();
+    assert!(one_password_export.starts_with("Title,Website,Username,Password,One-time password"));
+    assert!(one_password_export.contains("keychain-secret"));
+    assert!(one_password_export.contains("keychain note"));
+
+    mlocker()
+        .env("MLOCKER_MNEMONIC", MNEMONIC)
+        .args(["export", "--vault"])
+        .arg(&vault)
+        .args(["--file"])
+        .arg(&exported_keychain_csv)
+        .args(["--format", "keychain-csv"])
+        .assert()
+        .success();
+
+    let keychain_export = std::fs::read_to_string(&exported_keychain_csv).unwrap();
+    assert!(keychain_export.starts_with("Title,URL,Username,Password,Notes,OTPAuth"));
+    assert!(keychain_export.contains("keychain note"));
+    assert!(keychain_export.contains("JBSWY3DPEHPK3PXP"));
 }
 
 #[test]
@@ -353,7 +415,7 @@ fn export_logins_writes_decrypted_csv() {
 
     mlocker()
         .env("MLOCKER_MNEMONIC", MNEMONIC)
-        .args(["export-logins", "--vault"])
+        .args(["export", "--vault"])
         .arg(&vault)
         .args(["--file"])
         .arg(&csv)

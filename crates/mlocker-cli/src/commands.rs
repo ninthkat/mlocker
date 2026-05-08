@@ -9,10 +9,10 @@ use serde::Serialize;
 
 use crate::browser_host as browser_host_support;
 use crate::cli::{
-    AddLoginArgs, BrowserHostArgs, BrowserHostCommand, Cli, Command, DeleteLoginArgs,
-    CompletionArgs, DerivePasswordArgs, EditLoginArgs, ExportLoginsArgs, GetArgs, GetField,
-    ImportLoginsArgs, InitArgs, InjectArgs, ListArgs, SshAgentArgs, SyncArgs, SyncCommand,
-    SyncTransferArgs, WalletArgs,
+    AddLoginArgs, BrowserHostArgs, BrowserHostCommand, Cli, Command, CompletionArgs,
+    DeleteLoginArgs, DerivePasswordArgs, EditLoginArgs, ExportArgs, GetArgs, GetField, ImportArgs,
+    InitArgs, InjectArgs, ListArgs, SshAgentArgs, SyncArgs, SyncCommand, SyncTransferArgs,
+    WalletArgs,
 };
 use crate::core_adapter;
 use crate::importer;
@@ -36,8 +36,8 @@ where
         Command::AddLogin(args) => add_login(args, output),
         Command::EditLogin(args) => edit_login(args, output),
         Command::DeleteLogin(args) => delete_login(args, output),
-        Command::ImportLogins(args) => import_logins(args, output),
-        Command::ExportLogins(args) => export_logins(args, output),
+        Command::Import(args) => import_logins(args, output),
+        Command::Export(args) => export_logins(args, output),
         Command::Get(args) => get(args, output),
         Command::List(args) => list(args, output),
         Command::Inject(args) => inject(args, output),
@@ -103,6 +103,7 @@ fn add_login(args: AddLoginArgs, output: &mut impl Write) -> Result<()> {
         username: item.username,
         url: item.url,
         password: password_output,
+        notes: item.notes,
         totp,
     };
     write_json(output, &response)
@@ -144,7 +145,7 @@ fn delete_login(args: DeleteLoginArgs, output: &mut impl Write) -> Result<()> {
     write_json(output, &response)
 }
 
-fn import_logins(args: ImportLoginsArgs, output: &mut impl Write) -> Result<()> {
+fn import_logins(args: ImportArgs, output: &mut impl Write) -> Result<()> {
     let mut unlocked = unlock_vault(&args.vault)?;
     let input = fs::read_to_string(&args.file)
         .with_context(|| format!("read login import file {}", args.file.display()))?;
@@ -159,6 +160,7 @@ fn import_logins(args: ImportLoginsArgs, output: &mut impl Write) -> Result<()> 
                 username: login.username,
                 url: login.url,
                 password: login.password,
+                notes: login.notes,
                 totp: login.totp,
             })
             .collect(),
@@ -173,7 +175,7 @@ fn import_logins(args: ImportLoginsArgs, output: &mut impl Write) -> Result<()> 
     write_json(output, &response)
 }
 
-fn export_logins(args: ExportLoginsArgs, output: &mut impl Write) -> Result<()> {
+fn export_logins(args: ExportArgs, output: &mut impl Write) -> Result<()> {
     let unlocked = unlock_vault(&args.vault)?;
     let mut exported = Vec::with_capacity(unlocked.state.items.len());
     for item in &unlocked.state.items {
@@ -182,10 +184,11 @@ fn export_logins(args: ExportLoginsArgs, output: &mut impl Write) -> Result<()> 
             username: item.username.clone(),
             url: item.url.clone(),
             password: login_password_value(&unlocked, item)?,
+            notes: item.notes.clone(),
             totp: item.totp.as_ref().map(|totp| totp.secret.clone()),
         });
     }
-    let csv = importer::format_login_csv(&exported);
+    let csv = importer::format_login_export(&exported, args.format);
     match args.file {
         Some(path) => fs::write(&path, csv)
             .with_context(|| format!("write login export file {}", path.display())),
@@ -449,6 +452,8 @@ struct AddedLoginOutput {
     url: String,
     password: PasswordOutput,
     #[serde(skip_serializing_if = "Option::is_none")]
+    notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     totp: Option<String>,
 }
 
@@ -459,6 +464,8 @@ struct LoginOutput<'a> {
     username: &'a str,
     url: &'a str,
     password: PasswordOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notes: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     totp: Option<String>,
 }
@@ -486,6 +493,7 @@ impl<'a> LoginOutput<'a> {
             username: &item.username,
             url: &item.url,
             password: PasswordOutput::with_value(&item.password, &password),
+            notes: item.notes.as_deref(),
             totp: item
                 .totp
                 .as_ref()

@@ -21,8 +21,13 @@ cargo run -p mlocker-cli -- add-login --vault ./personal.vault \
   --title GitHub --username name@example.com --url https://github.com
 cargo run -p mlocker-cli -- get --vault ./personal.vault GitHub --field password
 cargo run -p mlocker-cli -- edit-login --vault ./personal.vault GitHub --title GitHub.com
-cargo run -p mlocker-cli -- import-logins --vault ./personal.vault --file ./chrome-passwords.csv
-cargo run -p mlocker-cli -- export-logins --vault ./personal.vault --file ./mlocker-export.csv
+cargo run -p mlocker-cli -- import --vault ./personal.vault --file ./chrome-passwords.csv
+cargo run -p mlocker-cli -- import --vault ./personal.vault \
+  --file ./1password.csv --format 1password-csv
+cargo run -p mlocker-cli -- import --vault ./personal.vault \
+  --file ./Passwords.csv --format keychain-csv
+cargo run -p mlocker-cli -- export --vault ./personal.vault \
+  --file ./mlocker-export.csv --format keychain-csv
 cargo run -p mlocker-cli -- inject --vault ./personal.vault < .env.template
 cargo run -p mlocker-cli -- wallet --vault ./personal.vault --chain ethereum --index 0
 cargo run -p mlocker-cli -- sync export --vault ./personal.vault --cloud-dir "$HOME/Library/Mobile Documents/mlocker"
@@ -30,8 +35,8 @@ cargo run -p mlocker-cli -- sync export --vault ./personal.vault --cloud-dir "$H
 
 Login passwords can be mnemonic-derived or user-entered with `add-login --password`. Mnemonic-derived password metadata stores its path under the nested `password` object; user-entered passwords do not have a path. The CLI stores only encrypted vault blobs.
 Use `delete-login --vault ./personal.vault <query>` to remove a login item.
-`import-logins` accepts Chrome/generic CSV and Bitwarden CSV exports; existing rows with the same URL and username are updated instead of duplicated.
-`export-logins` writes decrypted login CSV and must be treated as a user-initiated secret export.
+`import` accepts Chrome/generic CSV, Bitwarden CSV, 1Password CSV/JSON, and Apple Passwords/iCloud Keychain CSV exports; existing rows with the same URL and username are updated instead of duplicated.
+`export` writes decrypted login CSV for `generic-csv`, `1password-csv`, or `keychain-csv` and must be treated as a user-initiated secret export.
 
 For local OS/browser integration, the CLI can also create a password-wrapped vault:
 

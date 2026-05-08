@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::{anyhow, bail, Result};
 use serde_json::Value;
 
-use crate::cli::ImportFormat;
+use crate::cli::{ExportFormat, ImportFormat};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportedLogin {
@@ -11,6 +11,7 @@ pub struct ImportedLogin {
     pub username: String,
     pub url: String,
     pub password: String,
+    pub notes: Option<String>,
     pub totp: Option<String>,
 }
 
@@ -20,6 +21,7 @@ pub struct ExportedLogin {
     pub username: String,
     pub url: String,
     pub password: String,
+    pub notes: Option<String>,
     pub totp: Option<String>,
 }
 
@@ -36,9 +38,11 @@ pub fn parse_login_import(input: &str, format: ImportFormat) -> Result<Vec<Impor
             }
             parse_login_csv(input, format)
         }
-        ImportFormat::Chrome | ImportFormat::Bitwarden | ImportFormat::GenericCsv => {
-            parse_login_csv(input, format)
-        }
+        ImportFormat::Chrome
+        | ImportFormat::Bitwarden
+        | ImportFormat::GenericCsv
+        | ImportFormat::OnePasswordCsv
+        | ImportFormat::KeychainCsv => parse_login_csv(input, format),
         ImportFormat::OnePasswordJson => {
             let value: Value = serde_json::from_str(input)?;
             one_password_logins(&value)
@@ -67,6 +71,8 @@ pub fn parse_login_csv(input: &str, format: ImportFormat) -> Result<Vec<Imported
             ImportFormat::Auto => unreachable!("auto format must be resolved before mapping"),
             ImportFormat::Chrome | ImportFormat::GenericCsv => generic_login(&headers, record)?,
             ImportFormat::Bitwarden => bitwarden_login(&headers, record)?,
+            ImportFormat::OnePasswordCsv => one_password_csv_login(&headers, record)?,
+            ImportFormat::KeychainCsv => keychain_login(&headers, record)?,
             ImportFormat::OnePasswordJson | ImportFormat::GenericJson => {
                 bail!("JSON import format cannot parse CSV input")
             }
@@ -79,7 +85,15 @@ pub fn parse_login_csv(input: &str, format: ImportFormat) -> Result<Vec<Imported
     Ok(imported)
 }
 
-pub fn format_login_csv(logins: &[ExportedLogin]) -> String {
+pub fn format_login_export(logins: &[ExportedLogin], format: ExportFormat) -> String {
+    match format {
+        ExportFormat::Generic => format_generic_csv(logins),
+        ExportFormat::OnePassword => format_one_password_csv(logins),
+        ExportFormat::Keychain => format_keychain_csv(logins),
+    }
+}
+
+fn format_generic_csv(logins: &[ExportedLogin]) -> String {
     let mut output = String::from("name,url,username,password,totp\n");
     for login in logins {
         write_csv_row(
@@ -103,11 +117,24 @@ fn detect_format(format: ImportFormat, headers: &HashMap<String, usize>) -> Resu
     if headers.contains_key("login_uri") && headers.contains_key("login_password") {
         return Ok(ImportFormat::Bitwarden);
     }
+    if headers.contains_key("website")
+        && headers.contains_key("username")
+        && headers.contains_key("password")
+    {
+        return Ok(ImportFormat::OnePasswordCsv);
+    }
+    if headers.contains_key("url")
+        && headers.contains_key("username")
+        && headers.contains_key("password")
+        && headers.contains_key("otpauth")
+    {
+        return Ok(ImportFormat::KeychainCsv);
+    }
     if headers.contains_key("url") && headers.contains_key("username") {
         return Ok(ImportFormat::GenericCsv);
     }
     bail!(
-        "could not detect import format; use --format chrome, bitwarden, generic-csv, 1password-json, or generic-json"
+        "could not detect import format; use --format chrome, bitwarden, generic-csv, 1password-csv, 1password-json, keychain-csv, or generic-json"
     )
 }
 
@@ -171,6 +198,7 @@ fn generic_json_login(value: &Value) -> Option<ImportedLogin> {
         username,
         url,
         password,
+        notes: string_alias(value, &["notes", "note"]),
         totp,
     })
 }
@@ -241,15 +269,19 @@ fn one_password_login(item: &Value) -> Option<ImportedLogin> {
     }
 
     let title = string_alias(item, &["title", "name"]).unwrap_or_else(|| url.clone());
-    let totp =
-        one_password_field_value(&fields, &["otp", "totp"], &["otp", "totp", "one_time_password"])
-            .and_then(|value| normalize_totp_secret(&value));
+    let totp = one_password_field_value(
+        &fields,
+        &["otp", "totp"],
+        &["otp", "totp", "one_time_password"],
+    )
+    .and_then(|value| normalize_totp_secret(&value));
 
     Some(ImportedLogin {
         title,
         username,
         url,
         password,
+        notes: string_alias(item, &["notesPlain", "notes", "note"]),
         totp,
     })
 }
@@ -263,6 +295,18 @@ fn one_password_fields(item: &Value) -> Vec<&Value> {
         for section in sections {
             if let Some(section_fields) = section.get("fields").and_then(Value::as_array) {
                 fields.extend(section_fields);
+            }
+        }
+    }
+    if let Some(details) = item.get("details") {
+        if let Some(login_fields) = details.get("loginFields").and_then(Value::as_array) {
+            fields.extend(login_fields);
+        }
+        if let Some(sections) = details.get("sections").and_then(Value::as_array) {
+            for section in sections {
+                if let Some(section_fields) = section.get("fields").and_then(Value::as_array) {
+                    fields.extend(section_fields);
+                }
             }
         }
     }
@@ -312,8 +356,17 @@ fn string_alias(value: &Value, aliases: &[&str]) -> Option<String> {
             return value_to_string(entry);
         }
     }
-    for nested in ["login", "credential", "passwordDetails"] {
-        if let Some(value) = object.get(nested).and_then(|nested| string_alias(nested, aliases)) {
+    for nested in [
+        "overview",
+        "details",
+        "login",
+        "credential",
+        "passwordDetails",
+    ] {
+        if let Some(value) = object
+            .get(nested)
+            .and_then(|nested| string_alias(nested, aliases))
+        {
             return Some(value);
         }
     }
@@ -330,15 +383,19 @@ fn value_to_string(value: &Value) -> Option<String> {
 }
 
 fn first_url(value: &Value) -> Option<String> {
-    value
+    let direct_url = value
         .get("urls")
         .and_then(Value::as_array)
         .and_then(|urls| {
             urls.iter().find_map(|url| {
-                string_alias(url, &["href", "url"])
-                    .filter(|candidate| !candidate.trim().is_empty())
+                string_alias(url, &["href", "url"]).filter(|candidate| !candidate.trim().is_empty())
             })
-        })
+        });
+    if direct_url.is_some() {
+        return direct_url;
+    }
+
+    value.get("overview").and_then(first_url)
 }
 
 fn normalize_totp_secret(value: &str) -> Option<String> {
@@ -396,12 +453,16 @@ fn generic_login(headers: &HashMap<String, usize>, record: &[String]) -> Result<
     let totp = optional_field(headers, record, &["totp", "login_totp"])
         .filter(|value| !value.trim().is_empty())
         .map(str::to_owned);
+    let notes = optional_field(headers, record, &["notes", "note"])
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned);
 
     Ok(ImportedLogin {
         title: title.to_owned(),
         username: username.to_owned(),
         url: url.to_owned(),
         password: password.to_owned(),
+        notes,
         totp,
     })
 }
@@ -414,6 +475,7 @@ fn bitwarden_login(headers: &HashMap<String, usize>, record: &[String]) -> Resul
             username: String::new(),
             url: String::new(),
             password: String::new(),
+            notes: None,
             totp: None,
         });
     }
@@ -427,14 +489,113 @@ fn bitwarden_login(headers: &HashMap<String, usize>, record: &[String]) -> Resul
     let totp = optional_field(headers, record, &["login_totp"])
         .filter(|value| !value.trim().is_empty())
         .map(str::to_owned);
+    let notes = optional_field(headers, record, &["notes"])
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned);
 
     Ok(ImportedLogin {
         title: title.to_owned(),
         username: username.to_owned(),
         url: url.to_owned(),
         password: password.to_owned(),
+        notes,
         totp,
     })
+}
+
+fn one_password_csv_login(
+    headers: &HashMap<String, usize>,
+    record: &[String],
+) -> Result<ImportedLogin> {
+    let url = field(headers, record, &["website", "url"])?;
+    let username = field(headers, record, &["username"])?;
+    let password = field(headers, record, &["password"])?;
+    let title = optional_field(headers, record, &["title", "name"])
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(url);
+    let notes = optional_field(headers, record, &["notes", "note"])
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned);
+    let totp = optional_field(
+        headers,
+        record,
+        &["one-time_password", "one_time_password", "otp", "totp"],
+    )
+    .filter(|value| !value.trim().is_empty())
+    .and_then(normalize_totp_secret);
+
+    Ok(ImportedLogin {
+        title: title.to_owned(),
+        username: username.to_owned(),
+        url: url.to_owned(),
+        password: password.to_owned(),
+        notes,
+        totp,
+    })
+}
+
+fn keychain_login(headers: &HashMap<String, usize>, record: &[String]) -> Result<ImportedLogin> {
+    let url = field(headers, record, &["url", "website"])?;
+    let username = field(headers, record, &["username"])?;
+    let password = field(headers, record, &["password"])?;
+    let title = optional_field(headers, record, &["title", "name"])
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(url);
+    let notes = optional_field(headers, record, &["notes", "note"])
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned);
+    let totp = optional_field(headers, record, &["otpauth", "otp_auth", "totp"])
+        .filter(|value| !value.trim().is_empty())
+        .and_then(normalize_totp_secret);
+
+    Ok(ImportedLogin {
+        title: title.to_owned(),
+        username: username.to_owned(),
+        url: url.to_owned(),
+        password: password.to_owned(),
+        notes,
+        totp,
+    })
+}
+
+fn format_one_password_csv(logins: &[ExportedLogin]) -> String {
+    let mut output =
+        String::from("Title,Website,Username,Password,One-time password,Favorite status,Archived status,Tags,Notes\n");
+    for login in logins {
+        write_csv_row(
+            &mut output,
+            &[
+                login.title.as_str(),
+                login.url.as_str(),
+                login.username.as_str(),
+                login.password.as_str(),
+                login.totp.as_deref().unwrap_or(""),
+                "false",
+                "false",
+                "",
+                login.notes.as_deref().unwrap_or(""),
+            ],
+        );
+    }
+    output
+}
+
+fn format_keychain_csv(logins: &[ExportedLogin]) -> String {
+    let mut output = String::from("Title,URL,Username,Password,Notes,OTPAuth\n");
+    for login in logins {
+        write_csv_row(
+            &mut output,
+            &[
+                login.title.as_str(),
+                login.url.as_str(),
+                login.username.as_str(),
+                login.password.as_str(),
+                login.notes.as_deref().unwrap_or(""),
+                login.totp.as_deref().unwrap_or(""),
+            ],
+        );
+    }
+    output
 }
 
 fn field<'a>(
@@ -570,6 +731,48 @@ mod tests {
     }
 
     #[test]
+    fn parses_one_password_csv_exports() {
+        let csv = "Title,Website,Username,Password,One-time password,Favorite status,Archived status,Tags,Notes\nExample,https://example.com,alice,secret,otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP,false,false,work,\"migration note\"\n";
+
+        let imported = parse_login_import(csv, ImportFormat::OnePasswordCsv).unwrap();
+
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].title, "Example");
+        assert_eq!(imported[0].url, "https://example.com");
+        assert_eq!(imported[0].notes.as_deref(), Some("migration note"));
+        assert_eq!(imported[0].totp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+    }
+
+    #[test]
+    fn parses_keychain_csv_exports() {
+        let csv = "Title,URL,Username,Password,Notes,OTPAuth\nExample,https://example.com,alice,secret,\"migration note\",otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP\n";
+
+        let imported = parse_login_import(csv, ImportFormat::KeychainCsv).unwrap();
+
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].title, "Example");
+        assert_eq!(imported[0].password, "secret");
+        assert_eq!(imported[0].notes.as_deref(), Some("migration note"));
+        assert_eq!(imported[0].totp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+    }
+
+    #[test]
+    fn auto_detects_1password_and_keychain_csv() {
+        let one_password = "Title,Website,Username,Password,One-time password,Favorite status,Archived status,Tags,Notes\nExample,https://example.com,alice,secret,,,,,\n";
+        let keychain =
+            "Title,URL,Username,Password,Notes,OTPAuth\nExample,https://example.com,alice,secret,,\n";
+
+        assert_eq!(
+            parse_login_import(one_password, ImportFormat::Auto).unwrap()[0].url,
+            "https://example.com"
+        );
+        assert_eq!(
+            parse_login_import(keychain, ImportFormat::Auto).unwrap()[0].username,
+            "alice"
+        );
+    }
+
+    #[test]
     fn parses_generic_json_imports() {
         let json = r#"{
           "items": [
@@ -635,18 +838,94 @@ mod tests {
     }
 
     #[test]
+    fn parses_one_password_export_data_json() {
+        let json = r#"{
+          "accounts": [
+            {
+              "vaults": [
+                {
+                  "items": [
+                    {
+                      "overview": {
+                        "title": "Dropbox",
+                        "urls": [{"url": "https://www.dropbox.com/"}]
+                      },
+                      "details": {
+                        "loginFields": [
+                          {"value": "alice", "designation": "username"},
+                          {"value": "most-secure-password-ever!", "designation": "password"}
+                        ],
+                        "notesPlain": "This is a note.",
+                        "sections": [
+                          {
+                            "fields": [
+                              {
+                                "title": "one-time password",
+                                "id": "totp",
+                                "value": "otpauth://totp/Dropbox?secret=JBSWY3DPEHPK3PXP"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }"#;
+
+        let imported = parse_login_import(json, ImportFormat::OnePasswordJson).unwrap();
+
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].title, "Dropbox");
+        assert_eq!(imported[0].url, "https://www.dropbox.com/");
+        assert_eq!(imported[0].username, "alice");
+        assert_eq!(imported[0].password, "most-secure-password-ever!");
+        assert_eq!(imported[0].notes.as_deref(), Some("This is a note."));
+        assert_eq!(imported[0].totp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+    }
+
+    #[test]
     fn formats_csv_with_quoting() {
-        let csv = format_login_csv(&[ExportedLogin {
-            title: "Example, Inc".to_owned(),
-            username: "alice".to_owned(),
-            url: "https://example.com".to_owned(),
-            password: "quote\"secret".to_owned(),
-            totp: None,
-        }]);
+        let csv = format_login_export(
+            &[ExportedLogin {
+                title: "Example, Inc".to_owned(),
+                username: "alice".to_owned(),
+                url: "https://example.com".to_owned(),
+                password: "quote\"secret".to_owned(),
+                notes: None,
+                totp: None,
+            }],
+            ExportFormat::Generic,
+        );
 
         assert_eq!(
             csv,
             "name,url,username,password,totp\n\"Example, Inc\",https://example.com,alice,\"quote\"\"secret\",\n"
+        );
+    }
+
+    #[test]
+    fn formats_provider_csv_exports() {
+        let logins = [ExportedLogin {
+            title: "Example".to_owned(),
+            username: "alice".to_owned(),
+            url: "https://example.com".to_owned(),
+            password: "secret".to_owned(),
+            notes: Some("migration note".to_owned()),
+            totp: Some("JBSWY3DPEHPK3PXP".to_owned()),
+        }];
+
+        let one_password = format_login_export(&logins, ExportFormat::OnePassword);
+        assert!(one_password.starts_with("Title,Website,Username,Password,One-time password"));
+        assert!(one_password.contains("JBSWY3DPEHPK3PXP"));
+
+        let keychain = format_login_export(&logins, ExportFormat::Keychain);
+        assert_eq!(
+            keychain,
+            "Title,URL,Username,Password,Notes,OTPAuth\nExample,https://example.com,alice,secret,migration note,JBSWY3DPEHPK3PXP\n"
         );
     }
 }

@@ -457,6 +457,7 @@ mod tests {
             username: "alice".to_owned(),
             url: "https://example.com/login".to_owned(),
             password: mlocker_core::LoginPassword::user_input("secret"),
+            notes: None,
             totp: None,
         };
 
